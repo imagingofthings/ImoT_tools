@@ -10,3 +10,4 @@ imot\_tools.io
 
    ~imot_tools.io.plot
    ~imot_tools.io.s2image
+   ~imot_tools.io.fits
