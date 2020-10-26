@@ -11,6 +11,7 @@ Visualization and storage of images on :math:`\mathbb{S}^{2}`.
 import astropy.coordinates as coord
 import astropy.io.fits as fits
 import astropy.units as u
+import astropy.wcs as wcs
 import matplotlib.axes as axes
 import matplotlib.cm as cm
 import matplotlib.pyplot as plt
@@ -19,6 +20,7 @@ import numpy as np
 import pyproj
 import scipy.linalg as linalg
 
+import imot_tools.io.fits as ifits
 import imot_tools.io.plot as plot
 import imot_tools.math.sphere.transform as transform
 import imot_tools.util.argcheck as chk
@@ -49,7 +51,6 @@ def from_fits(file_name):
         return I
 
 
-# TODO: image re-interpolation for DS9-compatibility.
 class Image:
     r"""
     Container for storing real-valued images defined on :math:`\mathbb{S}^{2}`.
@@ -226,8 +227,8 @@ class Image:
 
               $ ds9 <FITS_file>.fits[IMAGE]
 
-          Only gridded maps are successfully visualized with DS9.  Moreover WCS information only
-          available in select subclasses.
+          Only FITS-compliant maps are successfully visualized with DS9.
+          Moreover WCS information only available in select subclasses.
         """
         primary_hdu = self._PrimaryHDU()
         image_hdu = self._ImageHDU()
@@ -267,7 +268,9 @@ class Image:
 
     @classmethod
     @chk.check(
-        dict(primary_hdu=chk.is_instance(fits.PrimaryHDU), image_hdu=chk.is_instance(fits.ImageHDU))
+        dict(primary_hdu=chk.is_instance(fits.PrimaryHDU),
+             image_hdu=chk.is_instance(fits.ImageHDU),
+        )
     )
     def _from_fits(cls, primary_hdu, image_hdu):
         """
@@ -781,3 +784,117 @@ class Image:
         x[np.isclose(x, 1e30)] = np.nan
         y[np.isclose(y, 1e30)] = np.nan
         return x, y
+
+
+class WCSImage(Image):
+    """
+    Spherical image container for WCS-described maps.
+
+    Main features:
+
+    * import/export to FITS-compliant format;
+    * View images using DS9/AstroPy. (see :py:meth:`~imot_tools.io.s2image.Image.to_fits`)
+    """
+    @chk.check('WCS', chk.is_instance(wcs.WCS))
+    def __init__(self, data, WCS):
+        """
+        Parameters
+        ----------
+        data : :py:class:`~numpy.ndarray`
+            multi-level (float) data-cube.
+
+            Possible shapes are:
+
+            * (N_height, N_width);
+            * (N_image, N_height, N_width);
+
+        WCS : :py:class:`~astropy.wcs.WCS`
+            (N_width, N_height) World Coordinate System with spatial axes.
+
+        Notes
+        -----
+        Caution: the FITS standard uses FORTRAN conventions for index/array
+        ordering. `WCS` dimensions/information (FORTRAN-ordered) must therefore
+        be reversed compared to `data` (assumed C-ordered).
+        """
+        if WCS.naxis != 2:
+            raise ValueError('Parameter[WCS] is ambiguous.')
+
+        N_width, N_height = WCS.array_shape
+        if data.shape[-2:] != (N_height, N_width):
+            raise ValueError('Parameters[grid, data] are inconsistent.')
+
+        grid = ifits.pix_grid(WCS)  # (3, N_height, N_width)
+        super().__init__(data, grid)
+
+        self._WCS = WCS.sub([1, 2, 0])  # 0 = insert new axis.
+        self._WCS.wcs.cname[2] = 'LAYER'
+        self._WCS.wcs.ctype[2] = ''
+
+    @property
+    def WCS(self):
+        """
+        Returns
+        -------
+        WCS : :py:class:`~astropy.wcs.WCS`
+            World Coordinate System (WCS), augmented with extra axes for
+            multi-layer images.
+        """
+        return self._WCS
+
+    def _PrimaryHDU(self):
+        """
+        Generate primary Header Descriptor Unit (HDU) for FITS export.
+
+        Returns
+        -------
+        hdu : :py:class:`~astropy.io.fits.PrimaryHDU`
+        """
+        metadata = dict(IMG_TYPE=(self.__class__.__name__, "Image subclass"))
+
+        hdu = fits.PrimaryHDU()
+        for k, v in metadata.items():
+            hdu.header[k] = v
+        return hdu
+
+    def _ImageHDU(self):
+        """
+        Generate image Header Descriptor Unit (HDU) for FITS export.
+
+        Returns
+        -------
+        hdu : :py:class:`~astropy.io.fits.ImageHDU`
+        """
+        hdu = fits.ImageHDU(data=self._data,
+                            header=self._WCS.to_header(),
+                            name="IMAGE")
+        return hdu
+
+    @classmethod
+    @chk.check(
+        dict(primary_hdu=chk.is_instance(fits.PrimaryHDU),
+             image_hdu=chk.is_instance(fits.ImageHDU),
+        )
+    )
+    def _from_fits(cls, primary_hdu, image_hdu):
+        """
+        Load image from Header Descriptor Units.
+
+        Parameters
+        ----------
+        primary_hdu : :py:class:`~astropy.io.fits.PrimaryHDU`
+        image_hdu : :py:class:`~astropy.io.fits.ImageHDU`
+
+        Returns
+        -------
+        I : :py:class:`~imot_tools.io.s2image.Image`
+        """
+        # PrimaryHDU: nothing for WCSImage.
+
+        # ImageHDU: extract data cube.
+        data = image_hdu.data
+        WCS = wcs.WCS(image_hdu).celestial  # Must drop LAYER-dimension to
+                                            # avoid ambiguity in constructor.
+
+        I = cls(data=data, WCS=WCS)
+        return I

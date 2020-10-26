@@ -20,9 +20,4 @@ imot\_tools.io.s2image
    .. autosummary::
    
       Image
-   
-   
-
-   
-   
-   
+      WCSImage
