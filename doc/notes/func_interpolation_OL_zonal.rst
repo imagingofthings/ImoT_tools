@@ -72,8 +72,9 @@ In the case of Equal-Angle sampling:
 Implementation Notes
 ********************
 
-* :py:func:`~imot_tools.math.sphere.grid.ea_sample`,
-  :py:func:`~imot_tools.math.sphere.grid.fibonacci_sample` and
+* :py:func:`~imot_tools.math.sphere.grid.equal_angle`,
+  :py:func:`~imot_tools.math.sphere.grid.fibonacci`,
+  :py:func:`~imot_tools.math.sphere.grid.healpix` and
   :py:class:`~imot_tools.math.sphere.interpolate.Interpolator` can be used to sample order-limited
   zonal functions and evaluate them at arbitrary :math:`r \in \mathbb{S}^{2}`.
 
