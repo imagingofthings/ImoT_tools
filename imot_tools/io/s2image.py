@@ -56,7 +56,7 @@ class Image:
 
     Main features:
 
-    * import/export spherical maps to FITS format;
+    * import/export spherical maps to (non-standard) FITS format;
     * advanced 2D plotting based on `Matplotlib <https://matplotlib.org/>`_;
 
     Examples
@@ -128,7 +128,8 @@ class Image:
     .. image:: _img/sphericalimage_lcc_example.png
     """
 
-    @chk.check(dict(data=chk.has_reals, grid=chk.has_reals))
+    @chk.check(dict(data=chk.has_reals,
+                    grid=chk.has_reals))
     def __init__(self, data, grid):
         """
         Parameters
@@ -720,7 +721,8 @@ class Image:
 
             ax.scatter(c_x, c_y, **plot_style)
 
-    @chk.check(dict(projection=chk.is_instance(pyproj.Proj), ax=chk.is_instance(axes.Axes)))
+    @chk.check(dict(projection=chk.is_instance(pyproj.Proj),
+                    ax=chk.is_instance(axes.Axes)))
     def _draw_beautify(self, projection, ax):
         """
         Format plot.
