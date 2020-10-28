@@ -10,6 +10,7 @@ Interpolation algorithms.
 
 import numpy as np
 import scipy.sparse as sp
+import tqdm
 
 import imot_tools.math.func as func
 import imot_tools.math.sphere.grid as grid
@@ -49,10 +50,8 @@ class Interpolator:
             f=chk.accept_any(chk.has_reals, chk.has_complex),
             r=chk.has_reals,
             sparsity_mask=chk.allow_None(
-                chk.require_all(
-                    chk.is_instance(sp.spmatrix), lambda _: np.issubdtype(_.dtype, np.bool_)
-                )
-            ),
+                chk.require_all(chk.is_instance(sp.spmatrix),
+                                lambda _: np.issubdtype(_.dtype, np.bool_))),
         )
     )
     def __call__(self, weight, support, f, r, sparsity_mask=None):
@@ -101,8 +100,16 @@ class Interpolator:
             beta = f * weight
             f_interp = beta @ kernel
         else:  # Sparse evaluation
-            raise NotImplementedError
+            # Evaluate kernel
+            row = sparsity_mask.row
+            col = sparsity_mask.col
+            dist = np.sum(support[:, row] * r[:, col], axis=0)
+            ker = self._kernel_func(np.clip(dist, 0, 1))
+            kernel = sp.coo_matrix((ker, (row, col)), shape=sparsity_mask.shape)
 
+            kernel_T = kernel.T.tocsr()
+            beta = f * weight
+            f_interp = (kernel_T @ beta.T).T
         return f_interp
 
 
@@ -180,16 +187,18 @@ class EqualAngleInterpolator(Interpolator):
         """
         super().__init__(N, approximate_kernel)
 
-    # TODO: Allow sparse evaluation.
     @chk.check(
         dict(
             colat_idx=chk.has_integers,
             lon_idx=chk.has_integers,
             f=chk.accept_any(chk.has_reals, chk.has_complex),
             r=chk.has_reals,
+            sparsity_mask=chk.allow_None(
+                chk.require_all(chk.is_instance(sp.spmatrix),
+                                lambda _: np.issubdtype(_.dtype, np.bool_))),
         )
     )
-    def __call__(self, colat_idx, lon_idx, f, r):
+    def __call__(self, colat_idx, lon_idx, f, r, sparsity_mask=None):
         """
         Interpolate function samples at order `N`.
 
@@ -203,6 +212,9 @@ class EqualAngleInterpolator(Interpolator):
             (L, N_colat, N_lon) zonal function values at support points. (float or complex)
         r : :py:class:`~numpy.ndarray`
             (3, N_px) evaluation points.
+        sparsity_mask : :py:class:`~scipy.sparse.spmatrix`
+            (N_s, N_px) sparsity mask (bool) to perform localized kernel evaluation.
+            The 0-th dimension has size N_s = N_colat * N_lon.
 
         Returns
         -------
@@ -239,6 +251,61 @@ class EqualAngleInterpolator(Interpolator):
             support=transform.pol2cart(1, colat[colat_idx, :], lon[:, lon_idx]).reshape((3, -1)),
             f=fw.reshape((L, -1)),
             r=r,
-            sparsity_mask=None,
+            sparsity_mask=sparsity_mask,
         )
         return f_interp
+
+
+@chk.check(dict(N=chk.is_integer,
+                R1=chk.require_all(chk.has_ndim(2), chk.has_reals),
+                R2=chk.require_all(chk.has_ndim(2), chk.has_reals)))
+def sparsity_mask(N, R1, R2):
+    r"""
+    Generate sparsity mask for fast kernel evaluation in
+    :py:class:`~imot_tools.math.sphere.Interpolator` instances.
+
+    Parameters
+    ----------
+    N : int
+        Interpolation order.
+    R1 : :py:class:`~numpy.ndarray`
+        (3, N_1) Cartesian coordinates.
+    R2 : :py:class:`~numpy.ndarray`
+        (3, N_2) Cartesian coordinates.
+
+    Returns
+    -------
+    S : :py:class:`~scipy.sparse.coo_matrix` (bool)
+        (N_1, N_2) boolean mask where kernel must be evaluated.
+
+    Notes
+    -----
+    Dense equivalent:
+
+        S = (R1.T @ R2) >= threshold(N)
+    """
+    N_1 = R1.shape[1]
+    if R1.shape != (3, N_1):
+        raise ValueError('Parameter[R1] must be a (3, N_1) array.')
+    N_2 = R2.shape[1]
+    if R2.shape != (3, N_2):
+        raise ValueError('Parameter[R2] must be a (3, N_2) array.')
+
+    if N_1 < N_2:
+        S = sparsity_mask(N, R2, R1).T
+        return S
+    else:
+        # Compute cut-off threshold
+        f = func.SphericalDirichlet(N, approx=True)
+        x = np.linspace(-1, 1, 10**6)
+        threshold = x[np.cumsum( (f(x) / f(1)) ** 2 ).nonzero()].min()
+
+        S = sp.dok_matrix((N_1, N_2), dtype=bool)
+        L = np.zeros((N_2,), dtype=float)  # Temporary buffer
+        idx = np.zeros((N_2,), dtype=bool)  # Temporary buffer
+        for i in tqdm.tqdm(np.arange(N_1)):
+            np.dot(R1[:, i], R2, out=L)
+            np.greater_equal(L, threshold, out=idx)
+            S[i, idx] = True
+        S = sp.coo_matrix(S)
+        return S

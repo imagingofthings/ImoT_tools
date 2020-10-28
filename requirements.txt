@@ -11,3 +11,4 @@ numpy >= 1.10
 pandas >= 0.20
 pyproj == 1.9.*
 scipy >= 1.0
+tqdm >= 4.0
